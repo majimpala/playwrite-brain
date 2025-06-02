@@ -1,22 +1,25 @@
 FROM node:18
 
-# Install required dependencies
+# Install basic dependencies
 RUN apt-get update && apt-get install -y wget gnupg
 
 # Set working directory
 WORKDIR /app
 
-# Copy only package files first to leverage Docker cache
+# Copy package files first
 COPY package.json package-lock.json* ./
 
-# Install local dependencies (this installs Playwright properly)
+# Install Node.js dependencies
 RUN npm install
 
-# Install required browsers
+# Install system dependencies for running Playwright browsers
+RUN npx playwright install-deps
+
+# Install browser binaries (Chromium, Firefox, etc.)
 RUN npx playwright install
 
-# Copy the rest of the app
+# Copy the rest of the code
 COPY . .
 
-# Run the app
+# Default command
 CMD ["npm", "start"]
