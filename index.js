@@ -1,7 +1,14 @@
-
+const express = require('express');
 const { chromium } = require('playwright');
 
-(async () => {
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json()); // for JSON webhook payloads
+
+app.post('/webhook', async (req, res) => {
+  console.log('Webhook received:', req.body);
+
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -50,4 +57,15 @@ const { chromium } = require('playwright');
   console.log(errors);
 
   await browser.close();
-})();
+
+  // Respond to webhook sender
+  res.json({ visited: visited.size, errorCount: errors.length, errors });
+});
+
+app.get('/', (req, res) => {
+  res.send('Webhook service is running.');
+});
+
+app.listen(port, () => {
+  console.log(`Server is listening on port ${port}`);
+});
