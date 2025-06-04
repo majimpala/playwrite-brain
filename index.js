@@ -1,48 +1,53 @@
-// ... (other requires)
+const express = require('express');
+const { chromium } = require('playwright');
 
+const app = express(); // <<<<<<<< THIS LINE IS CRUCIAL AND WAS LIKELY MISSING OR MISPLACED
+const port = process.env.PORT || 3000;
+
+app.use(express.json()); // for JSON webhook payloads
+
+// Your app.post('/webhook', ...) route definition should come AFTER 'const app = express();'
 app.post('/webhook', async (req, res) => {
   console.log('Webhook received:', req.body);
-  console.log(`Starting crawl for baseURL: ${'https://academybugs.com'}, startPath: ${'/find-bugs/'}`); // Hardcoded for now
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      '--no-sandbox', // Often needed in Docker/CI environments
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage', // Helps with resource issues in Docker
-    ],
-  });
+  const { targetUrl } = req.body; // Assuming you're using the version that accepts a target URL
+
+  if (!targetUrl) {
+    console.error('No targetUrl provided in webhook payload');
+    return res.status(400).json({ error: 'targetUrl is required' });
+  }
+
+  let baseURL;
+  let startURL;
+
+  try {
+    const parsedUrl = new URL(targetUrl);
+    baseURL = `${parsedUrl.protocol}//${parsedUrl.hostname}`;
+    startURL = targetUrl;
+    console.log(`Starting crawl for baseURL: ${baseURL}, startURL: ${startURL}`);
+  } catch (e) {
+    console.error('Invalid targetUrl provided:', targetUrl, e);
+    return res.status(400).json({ error: 'Invalid targetUrl format' });
+  }
+
+  // ... rest of your /webhook handler logic (launching Playwright, crawl function, etc.)
+  // Ensure the rest of the code from the previous correct version is here
+
+  const browser = await chromium.launch({ /* ... launch options ... */ });
   const context = await browser.newContext();
   const page = await context.newPage();
-
   const visited = new Set();
-  const baseURL = 'https://academybugs.com'; // Main domain to stay on
-  const startURL = baseURL + '/find-bugs/'; // Initial URL
   const errors = [];
   let pagesCrawledCount = 0;
 
-  page.on('console', msg => {
-    if (msg.type() === 'error') {
-      const errorText = `Console error on ${page.url()}: ${msg.text()}`;
-      console.log(errorText); // Log immediately
-      errors.push(errorText);
-    }
-  });
+  // ... (page event listeners: 'console', 'requestfailed', 'pageerror') ...
+  // page.on('console', msg => { ... });
+  // page.on('requestfailed', request => { ... });
+  // page.on('pageerror', pageError => { ... });
 
-  page.on('requestfailed', request => {
-    const errorText = `Request failed on ${page.url()} for ${request.url()}: ${request.failure().errorText}`;
-    console.log(errorText); // Log immediately
-    errors.push(errorText);
-  });
-
-  page.on('pageerror', pageError => { // Catch unhandled exceptions in the page
-    const errorText = `Page error (uncaught exception) on ${page.url()}: ${pageError.message}`;
-    console.log(errorText); // Log immediately
-    errors.push(errorText);
-  });
 
   async function crawl(urlToCrawl) {
-    // Normalize URL to avoid re-crawling due to trivial differences (e.g. trailing slash)
+    // ... (your crawl function logic) ...
     let currentUrl;
     try {
         currentUrl = new URL(urlToCrawl).toString();
@@ -55,16 +60,12 @@ app.post('/webhook', async (req, res) => {
         return;
     }
 
-
-    // Check if URL belongs to the base domain and hasn't been visited
-    // A more robust check for "on same site"
     const urlHostname = new URL(currentUrl).hostname;
     const baseHostname = new URL(baseURL).hostname;
+
     if (visited.has(currentUrl) || !(urlHostname === baseHostname || urlHostname.endsWith('.' + baseHostname))) {
-      if (visited.has(currentUrl)) {
-        // console.log(`Already visited: ${currentUrl}`);
-      } else {
-        console.log(`Skipping off-site or already processed: ${currentUrl}`);
+      if (!visited.has(currentUrl)) {
+        console.log(`Skipping off-site or already processed: ${currentUrl} (base: ${baseHostname})`);
       }
       return;
     }
@@ -74,11 +75,10 @@ app.post('/webhook', async (req, res) => {
     pagesCrawledCount++;
 
     try {
-      // Increased timeout, and try 'networkidle' for pages heavy on JS
       const response = await page.goto(currentUrl, { waitUntil: 'networkidle', timeout: 30000 });
       if (!response) {
-        errors.push(`No response received for ${currentUrl} (likely a navigation error caught below)`);
-        return;
+          errors.push(`No response received for ${currentUrl}`);
+          return;
       }
       if (!response.ok()) {
         const errorText = `HTTP ${response.status()} at ${currentUrl}`;
@@ -86,30 +86,51 @@ app.post('/webhook', async (req, res) => {
         errors.push(errorText);
       }
 
-      // Extract links
-      const links = await page.$$eval('a[href]', (anchors, pageBaseURL) =>
+      const links = await page.$$eval('a[href]', (anchors, pageBaseURLInternal) =>
         anchors.map(a => {
           try {
-            return new URL(a.getAttribute('href'), pageBaseURL).href; // Resolve relative URLs
+            // Ensure getAttribute returns a string before constructing URL
+            const hrefAttr = a.getAttribute('href');
+            if (typeof hrefAttr === 'string') {
+                return new URL(hrefAttr, pageBaseURLInternal).href;
+            }
+            return null;
           } catch (e) {
-            return null; // Invalid href
+            return null;
           }
         }).filter(href => href !== null)
-      , page.url()); // Pass current page's URL as base for resolving relative links
+      , page.url());
 
       console.log(`Found ${links.length} links on ${currentUrl}`);
-
       for (const link of links) {
-        // Small delay to be polite and avoid overwhelming the server or Playwright
-        // await new Promise(resolve => setTimeout(resolve, 50));
-        await crawl(link); // Recursive call
+        await crawl(link);
       }
     } catch (e) {
       const errorText = `Navigation or processing error at ${currentUrl}: ${e.message}`;
-      console.error(errorText, e); // Log the full error object for more details
+      console.error(errorText, e.stack);
       errors.push(errorText);
     }
   }
+
+  // Event listeners for page errors
+  page.on('console', msg => {
+    if (msg.type() === 'error') {
+      const errorText = `Console error on ${page.url()}: ${msg.text()}`;
+      console.log(errorText);
+      errors.push(errorText);
+    }
+  });
+  page.on('requestfailed', request => {
+    const errorText = `Request failed on ${page.url()} for ${request.url()}: ${request.failure()?.errorText || 'Unknown failure reason'}`;
+    console.log(errorText);
+    errors.push(errorText);
+  });
+  page.on('pageerror', pageError => {
+    const errorText = `Page error (uncaught exception) on ${page.url()}: ${pageError.message}`;
+    console.log(errorText);
+    errors.push(errorText);
+  });
+
 
   try {
     await crawl(startURL);
@@ -128,11 +149,23 @@ app.post('/webhook', async (req, res) => {
     console.log('--- END ERROR DETAILS ---');
   }
 
-
   await browser.close();
   console.log('Browser closed.');
 
-  res.json({ visited: visited.size, crawled: pagesCrawledCount, errorCount: errors.length, errors });
+  res.json({
+    target: startURL,
+    visited: visited.size,
+    crawled: pagesCrawledCount,
+    errorCount: errors.length,
+    errors
+  });
 });
 
-// ... (app.get and app.listen)
+
+app.get('/', (req, res) => {
+  res.send('Webhook service is running.');
+});
+
+app.listen(port, () => {
+  console.log(`Server is listening on port ${port}`);
+});
