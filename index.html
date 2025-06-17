@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Bug Finder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .card { background-color: white; border-radius: 0.75rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+        .btn-primary { background-color: #4f46e5; color: white; transition: background-color 0.3s ease; }
+        .btn-primary:hover { background-color: #4338ca; }
+        .btn-primary:disabled { background-color: #a5b4fc; cursor: not-allowed; }
+        .accordion-header { cursor: pointer; transition: background-color 0.2s ease-out; }
+        .accordion-header:hover { background-color: #f9fafb; }
+        .accordion-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+        .accordion-item.open .accordion-content { max-height: 1000px; }
+        .accordion-item.open .accordion-arrow { transform: rotate(90deg); }
+        .replication-steps { border-left: 2px solid #e5e7eb; font-family: 'Courier New', Courier, monospace; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen p-4">
+
+    <main class="w-full max-w-4xl mx-auto">
+        <div class="card p-6 sm:p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <i class="fas fa-search-plus text-3xl text-indigo-600"></i>
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-900">Unified Bug Finder</h1>
+                    <p class="text-gray-500">The UI and Crawler are now one application.</p>
+                </div>
+            </div>
+
+            <form id="scan-form" class="space-y-4">
+                <div>
+                    <label for="target-url" class="block text-sm font-medium text-gray-700 mb-1">Target URL</label>
+                    <input type="url" id="target-url" placeholder="https://example.com" required class="w-full px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="bug-instructions" class="block text-sm font-medium text-gray-700 mb-1">Bug Instructions</label>
+                    <textarea id="bug-instructions" placeholder="e.g., Check for broken images and unresponsive buttons." rows="3" class="w-full px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                </div>
+                <button type="submit" id="submit-btn" class="btn-primary w-full font-semibold py-2.5 px-6 rounded-md flex items-center justify-center gap-2">
+                    <i class="fas fa-search"></i>
+                    <span>Start Scan</span>
+                </button>
+            </form>
+
+            <div id="status-container" class="mt-6 text-center hidden">
+                <div id="loader" class="flex items-center justify-center gap-3">
+                    <i class="fas fa-spinner fa-spin text-2xl text-indigo-600"></i>
+                    <p class="text-lg font-medium text-gray-600">Scanning in progress...</p>
+                </div>
+                 <div id="error-message" class="text-red-600 bg-red-50 p-4 rounded-md font-medium hidden"></div>
+            </div>
+
+            <div id="results-container" class="hidden mt-8">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Scan Report</h2>
+                <div id="report-content" class="space-y-3"></div>
+                 <p id="no-bugs-message" class="hidden text-center text-gray-500 py-6 bg-gray-50 rounded-md">
+                    <i class="fas fa-check-circle text-green-500 text-2xl mb-2"></i><br>
+                    No bugs were found.
+                </p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const scanForm = document.getElementById('scan-form');
+            const targetUrlInput = document.getElementById('target-url');
+            const instructionsInput = document.getElementById('bug-instructions');
+            const submitBtn = document.getElementById('submit-btn');
+            const statusContainer = document.getElementById('status-container');
+            const loader = document.getElementById('loader');
+            const errorMessage = document.getElementById('error-message');
+            const resultsContainer = document.getElementById('results-container');
+            const reportContent = document.getElementById('report-content');
+            const noBugsMessage = document.getElementById('no-bugs-message');
+
+            const webhookUrl = '/webhook'; // It now calls the local endpoint
+
+            const bugTypeConfig = {
+                brokenImages: { icon: 'fa-image', title: 'Broken Images', color: 'red' },
+                unresponsiveButtons: { icon: 'fa-hand-pointer', title: 'Unresponsive Buttons', color: 'orange' },
+                consoleErrors: { icon: 'fa-terminal', title: 'Console Errors', color: 'blue' },
+                pageErrors: { icon: 'fa-file-circle-exclamation', title: 'Page Errors', color: 'purple' },
+            };
+
+            const resetUI = () => {
+                resultsContainer.classList.add('hidden');
+                errorMessage.classList.add('hidden');
+                statusContainer.classList.add('hidden');
+                loader.classList.remove('hidden');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-search"></i><span>Start Scan</span>';
+            };
+
+            const createAccordionItem = (category, bugs) => {
+                const config = bugTypeConfig[category] || { icon: 'fa-bug', title: category, color: 'gray' };
+                const item = document.createElement('div');
+                item.className = 'accordion-item border border-gray-200 rounded-lg';
+                item.innerHTML = `
+                    <div class="accordion-header flex items-center justify-between p-4 bg-gray-50 rounded-t-lg">
+                        <div class="flex items-center gap-3">
+                            <i class="fas ${config.icon} text-${config.color}-500"></i>
+                            <span class="font-semibold text-gray-800">${config.title}</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm font-bold bg-${config.color}-100 text-${config.color}-800 px-2 py-1 rounded-full">${bugs.length}</span>
+                            <i class="fas fa-chevron-right accordion-arrow transition-transform"></i>
+                        </div>
+                    </div>
+                    <div class="accordion-content bg-white p-4 border-t border-gray-200">
+                        <ul class="space-y-4">${bugs.map(bug => `
+                            <li class="p-3 bg-gray-50 rounded-md">
+                                <p class="text-sm mb-2"><strong>Location:</strong> <a href="${bug.pageUrl}" target="_blank" class="text-indigo-600 hover:underline break-all">${escapeHtml(bug.pageUrl)}</a></p>
+                                <p class="text-sm mb-2"><strong>Detail:</strong> <code class="bg-gray-200 text-gray-800 px-1 rounded break-all">${escapeHtml(bug.detail || 'N/A')}</code></p>
+                                <div class="mt-2"><p class="text-xs font-semibold text-gray-500 mb-1">REPLICATION:</p><div class="replication-steps text-xs text-gray-800 p-2 pl-3 bg-white rounded">${escapeHtml(bug.replicationSteps)}</div></div>
+                            </li>`).join('')}</ul>
+                    </div>`;
+                item.querySelector('.accordion-header').addEventListener('click', () => item.classList.toggle('open'));
+                return item;
+            };
+
+            const displayReport = (report) => {
+                resultsContainer.classList.remove('hidden');
+                reportContent.innerHTML = '';
+                let totalBugs = Object.values(report).reduce((sum, bugs) => sum + (Array.isArray(bugs) ? bugs.length : 0), 0);
+                
+                if (totalBugs > 0) {
+                    Object.keys(report).forEach(key => {
+                        if (report[key]?.length > 0) reportContent.appendChild(createAccordionItem(key, report[key]));
+                    });
+                    noBugsMessage.classList.add('hidden');
+                } else {
+                    noBugsMessage.classList.remove('hidden');
+                }
+            };
+
+            const showScanError = (message) => {
+                statusContainer.classList.remove('hidden');
+                loader.classList.add('hidden');
+                errorMessage.innerHTML = message;
+                errorMessage.classList.remove('hidden');
+            };
+
+            const escapeHtml = (unsafe) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+
+            scanForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                resetUI();
+                statusContainer.classList.remove('hidden');
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Scanning...</span>';
+
+                try {
+                    const response = await fetch(webhookUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ targetUrl: targetUrlInput.value, instructions: instructionsInput.value })
+                    });
+                    
+                    statusContainer.classList.add('hidden');
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'An unknown error occurred.');
+                    displayReport(data.report || {});
+                } catch (error) {
+                    showScanError(`<i class="fas fa-exclamation-triangle mr-2"></i><strong>Scan Failed:</strong> ${error.message}`);
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="fas fa-search"></i><span>Start Scan</span>';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
