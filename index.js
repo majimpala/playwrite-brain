@@ -1,8 +1,6 @@
 const express = require('express');
 const { chromium } = require('playwright');
 const path = require('path');
-const fs = require('fs').promises; // Using promises version of fs
-const JSZip = require('jszip');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -10,41 +8,6 @@ const port = process.env.PORT || 3000;
 // --- Middleware ---
 app.use(express.json()); // To parse JSON request bodies
 app.use(express.static(path.join(__dirname, 'public'))); // To serve the index.html file
-
-// --- Download Endpoint ---
-app.get('/download', async (req, res) => {
-    try {
-        console.log('Download request received. Zipping files...');
-        const zip = new JSZip();
-
-        // Read the files
-        const packageJsonContent = await fs.readFile(path.join(__dirname, 'package.json'), 'utf-8');
-        const indexJsContent = await fs.readFile(path.join(__dirname, 'index.js'), 'utf-8');
-        const indexHtmlContent = await fs.readFile(path.join(__dirname, 'public', 'index.html'), 'utf-8');
-
-        // Add files to the zip
-        zip.file('package.json', packageJsonContent);
-        zip.file('index.js', indexJsContent);
-        
-        const publicFolder = zip.folder('public');
-        publicFolder.file('index.html', indexHtmlContent);
-
-        // Generate the zip file as a buffer
-        const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
-
-        // Set headers for file download
-        res.set('Content-Type', 'application/zip');
-        res.set('Content-Disposition', 'attachment; filename="bug-finder-app.zip"');
-        res.send(zipBuffer);
-        
-        console.log('Zip file sent successfully.');
-
-    } catch (error) {
-        console.error('Failed to create or send zip file:', error);
-        res.status(500).send('Error creating the project zip file.');
-    }
-});
-
 
 // --- Bug Checking Logic ---
 const isImageBroken = async (page, imgHandle) => {
