@@ -1,11 +1,13 @@
 {
-  "name": "playwright-bug-scanner",
+  "name": "unified-bug-finder-app",
   "version": "1.0.0",
+  "description": "A single, unified application with a UI and a Playwright crawler backend.",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^5.1.0",
+    "express": "^4.19.2",
     "playwright": "^1.44.0"
   }
 }
